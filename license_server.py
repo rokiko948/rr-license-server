@@ -272,6 +272,248 @@ def unrevoke_license():
     return jsonify({"ok": True, "message": f"License {key} re-enabled"})
 
 
+# ── WEB DASHBOARD ─────────────────────────────────────────────────────────────
+
+@app.route("/", methods=["GET"])
+@app.route("/dashboard", methods=["GET"])
+def dashboard():
+    """Web dashboard for license management."""
+    html = '''<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RR License Manager</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
+.header{background:#1e293b;padding:20px;border-bottom:1px solid #334155;display:flex;align-items:center;gap:15px}
+.header h1{font-size:1.4em;color:#f8fafc}
+.header span{color:#94a3b8;font-size:.9em}
+.container{max-width:1200px;margin:0 auto;padding:20px}
+.auth-box{background:#1e293b;border-radius:12px;padding:30px;text-align:center;max-width:400px;margin:60px auto}
+.auth-box h2{margin-bottom:15px;color:#f8fafc}
+.auth-box input{font-size:16px;padding:12px;width:100%;border:2px solid #334155;border-radius:8px;background:#0f172a;color:#e2e8f0;margin-bottom:12px}
+.auth-box button{padding:12px 30px;font-size:16px;background:#3b82f6;color:white;border:none;border-radius:8px;cursor:pointer;width:100%}
+.auth-box button:hover{background:#2563eb}
+.auth-box .error{color:#ef4444;margin-top:10px}
+.tabs{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}
+.tab{padding:10px 20px;background:#1e293b;border:1px solid #334155;border-radius:8px;cursor:pointer;color:#94a3b8;font-size:.95em}
+.tab.active{background:#3b82f6;color:white;border-color:#3b82f6}
+.panel{display:none}.panel.active{display:block}
+.card{background:#1e293b;border-radius:12px;padding:20px;margin-bottom:15px;border:1px solid #334155}
+.card h3{color:#f8fafc;margin-bottom:10px}
+input,select{font-size:14px;padding:10px;border:1px solid #334155;border-radius:6px;background:#0f172a;color:#e2e8f0;width:100%;margin-bottom:10px}
+button{padding:10px 20px;background:#3b82f6;color:white;border:none;border-radius:6px;cursor:pointer;font-size:14px}
+button:hover{background:#2563eb}
+button.danger{background:#ef4444}.button.danger:hover{background:#dc2626}
+button.success{background:#22c55e}.button.success:hover{background:#16a34a}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid #334155;font-size:.9em}
+th{color:#94a3b8;font-weight:600}
+.badge{padding:3px 8px;border-radius:4px;font-size:.8em;font-weight:600}
+.badge.active{background:#064e3b;color:#34d399}
+.badge.revoked{background:#450a0a;color:#f87171}
+.actions{display:flex;gap:6px}
+.status{padding:12px;border-radius:8px;margin:10px 0;display:none}
+.status.show{display:block}
+.status.ok{background:#064e3b;color:#34d399}
+.status.err{background:#450a0a;color:#f87171}
+.log-entry{background:#0f172a;padding:10px;border-radius:6px;margin-bottom:8px;font-size:.85em}
+.log-entry .time{color:#64748b}.log-entry .event{color:#3b82f6;font-weight:600}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+.stat{background:#1e293b;padding:15px;border-radius:10px;text-align:center;border:1px solid #334155}
+.stat .num{font-size:1.8em;font-weight:700;color:#3b82f6}.stat .label{color:#94a3b8;font-size:.85em}
+</style></head><body>
+
+<div id="authSection">
+  <div class="auth-box">
+    <h2>🔐 RR License Manager</h2>
+    <input type="password" id="tokenInput" placeholder="Enter admin token" autofocus>
+    <button onclick="login()">Login</button>
+    <div class="error" id="authError"></div>
+  </div>
+</div>
+
+<div id="mainApp" style="display:none">
+  <div class="header">
+    <h1>🔑 RR License Manager</h1>
+    <span id="statusText"></span>
+  </div>
+  <div class="container">
+    <div class="stats" id="statsBar"></div>
+    <div class="tabs">
+      <div class="tab active" onclick="showTab('licenses')">📋 Licenses</div>
+      <div class="tab" onclick="showTab('create')">➕ Create</div>
+      <div class="tab" onclick="showTab('logs')">📊 Logs</div>
+    </div>
+    <div class="status" id="statusMsg"></div>
+    
+    <div id="licenses" class="panel active">
+      <div id="licenseList">Loading...</div>
+    </div>
+    
+    <div id="create" class="panel">
+      <div class="card">
+        <h3>Create New License</h3>
+        <input id="newName" placeholder="Customer name">
+        <input id="newEmail" placeholder="Customer email (optional)">
+        <select id="newPlan">
+          <option value="standard">Standard</option>
+          <option value="pro">Pro</option>
+          <option value="enterprise">Enterprise</option>
+        </select>
+        <button onclick="createLicense()">Create License Key</button>
+        <div class="status" id="createResult"></div>
+      </div>
+    </div>
+    
+    <div id="logs" class="panel">
+      <div class="card">
+        <h3>Usage Logs</h3>
+        <input id="logFilter" placeholder="Filter by license key (optional)">
+        <button onclick="loadLogs()">Refresh</button>
+      </div>
+      <div id="logList">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let TOKEN = '';
+
+function api(endpoint, method='GET', body=null) {
+  const opts = {method, headers:{'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'}};
+  if(body) opts.body = JSON.stringify(body);
+  return fetch('/api/'+endpoint, opts).then(r=>r.json());
+}
+
+function show(el, msg, type='ok') {
+  el.className = 'status show ' + type;
+  el.textContent = msg;
+  setTimeout(()=>el.className='status', 4000);
+}
+
+async function login() {
+  TOKEN = document.getElementById('tokenInput').value;
+  try {
+    const r = await api('licenses');
+    if(r.ok) {
+      document.getElementById('authSection').style.display='none';
+      document.getElementById('mainApp').style.display='block';
+      loadAll();
+    } else {
+      document.getElementById('authError').textContent = 'Invalid token';
+    }
+  } catch(e) {
+    document.getElementById('authError').textContent = 'Connection error';
+  }
+}
+
+document.getElementById('tokenInput').addEventListener('keydown', e => { if(e.key==='Enter') login(); });
+
+function showTab(name) {
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById(name).classList.add('active');
+  event.target.classList.add('active');
+  if(name==='licenses') loadLicenses();
+  if(name==='logs') loadLogs();
+}
+
+async function loadAll() {
+  const r = await api('licenses');
+  if(!r.ok) return;
+  const licenses = r.licenses || [];
+  const active = licenses.filter(l=>!l.revoked).length;
+  const revoked = licenses.filter(l=>l.revoked).length;
+  document.getElementById('statsBar').innerHTML = 
+    `<div class="stat"><div class="num">${licenses.length}</div><div class="label">Total Licenses</div></div>` +
+    `<div class="stat"><div class="num">${active}</div><div class="label">Active</div></div>` +
+    `<div class="stat"><div class="num">${revoked}</div><div class="label">Revoked</div></div>`;
+  document.getElementById('statusText').textContent = `Server connected • ${licenses.length} licenses`;
+  renderLicenses(licenses);
+}
+
+async function loadLicenses() {
+  const r = await api('licenses');
+  if(r.ok) renderLicenses(r.licenses||[]);
+}
+
+function renderLicenses(licenses) {
+  if(!licenses.length) {
+    document.getElementById('licenseList').innerHTML = '<div class="card"><p style="color:#64748b">No licenses yet. Create one!</p></div>';
+    return;
+  }
+  let html = '<table><tr><th>Key</th><th>User</th><th>Plan</th><th>Status</th><th>Last Check</th><th>Actions</th></tr>';
+  licenses.forEach(l => {
+    const status = l.revoked ? '<span class="badge revoked">Revoked</span>' : '<span class="badge active">Active</span>';
+    const lastCheck = l.last_check ? new Date(l.last_check).toLocaleDateString() : 'Never';
+    const user = (l.user&&l.user.name) || 'Unknown';
+    const actions = l.revoked 
+      ? `<button class="success" onclick="unrevoke('${l.key}')">Re-enable</button>`
+      : `<button class="danger" onclick="revoke('${l.key}')">Revoke</button>`;
+    html += `<tr><td><code>${l.key}</code></td><td>${user}</td><td>${l.plan}</td><td>${status}</td><td>${lastCheck}</td><td class="actions">${actions}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('licenseList').innerHTML = html;
+}
+
+async function createLicense() {
+  const name = document.getElementById('newName').value;
+  const email = document.getElementById('newEmail').value;
+  const plan = document.getElementById('newPlan').value;
+  if(!name) return show(document.getElementById('createResult'), 'Name is required', 'err');
+  const r = await api('create', 'POST', {plan, user:{name, email}});
+  const el = document.getElementById('createResult');
+  if(r.ok) {
+    show(el, `✅ License created: ${r.license_key}`, 'ok');
+    document.getElementById('newName').value='';
+    document.getElementById('newEmail').value='';
+    loadAll();
+  } else {
+    show(el, 'Error: '+(r.error||'Unknown'), 'err');
+  }
+}
+
+async function revoke(key) {
+  if(!confirm('Revoke '+key+'? This will stop their software.')) return;
+  const r = await api('revoke', 'POST', {license_key:key});
+  if(r.ok) { loadAll(); show(document.getElementById('statusMsg'), 'License revoked', 'ok'); }
+}
+
+async function unrevoke(key) {
+  const r = await api('unrevoke', 'POST', {license_key:key});
+  if(r.ok) { loadAll(); show(document.getElementById('statusMsg'), 'License re-enabled', 'ok'); }
+}
+
+async function loadLogs() {
+  const filter = document.getElementById('logFilter').value;
+  let endpoint = 'logs?limit=50';
+  if(filter) endpoint += '&key='+encodeURIComponent(filter);
+  const r = await api(endpoint);
+  if(!r.ok) return;
+  const logs = r.logs||[];
+  if(!logs.length) {
+    document.getElementById('logList').innerHTML = '<div class="card"><p style="color:#64748b">No logs yet.</p></div>';
+    return;
+  }
+  let html = '';
+  logs.reverse().forEach(l => {
+    const time = l.timestamp || l.received_at;
+    html += `<div class="log-entry"><span class="time">${time}</span> — <span class="event">${l.event}</span> — Key: <code>${l.license_key}</code> — ${JSON.stringify(l.details||{})}</div>`;
+  });
+  document.getElementById('logList').innerHTML = html;
+}
+
+// Auto-login if token in URL hash
+if(location.hash.startsWith('#token=')) {
+  TOKEN = location.hash.replace('#token=','');
+  login();
+}
+</script>
+</body></html>'''
+    return html
+
+
 # ── START ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
